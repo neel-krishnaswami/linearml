@@ -12,7 +12,7 @@ let rec freshen x vs =
   else
     x
 
-type pat = PVar | PTuple of pat list | PCon of conid * pat 
+type pat = PVar | PTuple of pat list | PCon of conid * pat | PBang of pat 
 
 type loc = Lexing.position * Lexing.position
 
@@ -20,38 +20,42 @@ type 'a exp =
   | Var of var
   | Abs of var * 'a 
   | Lam of pat * 'a 
-  | App of 'a * 'a list 
+  | App of 'a * 'a 
   | Record of (field * 'a) list 
   | Proj of 'a * field
   | Tuple of 'a list 
-  | Con of conid * 'a 
+  | Con of conid 
   | Case of 'a * (pat * 'a) list 
-  | Annot of 'a * 'a 
+  | Annot of 'a * 'a
+  | Num of int 
   | Forall of 'a 
   | Lolli of 'a * 'a 
   | Tensor of 'a list 
   | With of (field * 'a) list 
-  | Sum of (conid * 'a) list 
+  | Sum of (conid * 'a) list
   | Mu of 'a 
+  | Bang of 'a 
 
 let map f (e : 'a exp) = 
   match e with
   | Var x        -> Var x
   | Abs (x,e)    -> Abs(x, f e)
   | Lam (p,e)    -> Lam(p, f e)
-  | App (e, es)  -> App(f e, List.map f es)
+  | App (e, e')  -> App(f e, f e')
   | Record nes   -> Record (List.map (fun (n, e) -> (n, f e)) nes)
   | Proj (e, n)  -> Proj (f e, n)
   | Tuple es     -> Tuple (List.map f es)
-  | Con (c,e)    -> Con(c, f e)
+  | Con c        -> Con c
   | Case (e,pes) -> Case(f e, List.map (fun (p, e) -> (p, f e)) pes)
   | Annot (e,e') -> Annot(f e, f e')
+  | Num n        -> Num n 
   | Forall e     -> Forall (f e)
   | Lolli (e,e') -> Lolli(f e, f e')
   | Tensor es    -> Tensor (List.map f es)
   | With nes     -> With (List.map (fun (n, e) -> (n, f e)) nes)
   | Sum ces      -> With (List.map (fun (c, e) -> (c, f e)) ces)
   | Mu e         -> Mu (f e)
+  | Bang e       -> Bang (f e)
 
 let join (m : 'a monoid) (e : 'a exp) = 
   let (zero, (+)) = m.unit, m.join in 
@@ -60,19 +64,21 @@ let join (m : 'a monoid) (e : 'a exp) =
   | Var x -> zero 
   | Abs (x, e) -> e
   | Lam (p,e) -> e
-  | App (e,es) -> e + reduce es
+  | App (e,e') -> e + e'
   | Record nes -> reduce (List.map snd nes)
   | Proj (e,n) -> e
   | Tuple es -> reduce es
-  | Con (c,e) -> e
+  | Con c -> zero 
   | Case (e,pes) -> e + reduce (List.map snd pes)
   | Annot (e,e') -> e + e'
+  | Num n        -> zero
   | Forall e -> e
   | Lolli (e,e') -> e + e'
   | Tensor es -> reduce es
   | With nes -> reduce (List.map snd nes)
   | Sum ces -> reduce (List.map snd ces)
   | Mu e -> e
+  | Bang e -> e 
 
 type t = In of loc * V.t * t exp 
 

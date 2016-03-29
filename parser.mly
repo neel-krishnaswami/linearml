@@ -7,11 +7,22 @@ let forall x tp = make (Forall (make (Abs(x, tp))))
 
 let rec abs xs e = 
   match xs with
-  | e -> e 
+  | [] -> e 
   | x :: xs -> make (Abs(x, abs xs e))
 
 let rec func (p, xs) e = 
   make (Lam(p, abs xs e))
+
+let rec make_tuple es = 
+  match es with
+  | [e] -> e
+  | es  -> make (Tuple es)
+
+let rec make_tensor es = 
+  match es with
+  | [e] -> e
+  | es  -> make (Tensor es)
+
 %}
 
 %token TYPE
@@ -67,23 +78,24 @@ let rec func (p, xs) e =
 %token EOF
 
 
-%start tp_start
+%start tp_start exp_start
 %type<Ast.t> tp_start
+%type<Ast.t> exp_start
   
 %%
 
 tp_atom :
-| IDENT           { make (Var $1) }
+| IDENT                               { make (Var $1) }
 | LBRACE record_fields RBRACE         { make (With $2) }
 | LBRACK sum_fields    RBRACK         { make (Sum $2)  }
 | LPAREN tp RPAREN                    { make (out $2)  } 
-| LPAREN tp_atom tensor_fields RPAREN { make (Tensor ($2 :: $3)) }
-| FIX IDENT DOT LBRACK sum_fields RBRACK { make (Mu(abs $2 (make (Sum $5)))) }
+| LPAREN tensor_fields RPAREN         { make_tensor $2 }
+| FIX IDENT DOT LBRACK sum_fields RBRACK { make (Mu(abs [$2] (make (Sum $5)))) }
 ;
 
 tp_app :
 | tp_atom         { $1 }
-| BANG tp_atom         { make (Bang $2) }
+| BANG tp_atom    { make (Bang $2) }
 | tp_app tp_atom  { make (App($1, $2)) }
 ;
 
@@ -111,6 +123,42 @@ tensor_fields :
 | TENSOR tp tensor_fields  { $2 :: $3}
 ;
 
+exp_atom :
+| IDENT                        { make (Var $1) }
+| CONID                        { make (Con $1) }
+| LPAREN comma_exps RPAREN     { make_tuple $2 }
+| LBRACE exp_fields RBRACE     { make (Record $2) }
+| NUM                          { make (Num $1) }
+;
+
+exp_fields : 
+|                                 { [] }
+| IDENT COLON exp                 { [$1, $3] }
+| IDENT COLON exp SEMI exp_fields { ($1, $3) :: $5 }
+;
+
+comma_exps :
+|                { [] }
+| exp            { [$1] }
+| exp COMMA comma_exps { $1 :: $3}
+;
+
+exp_app :
+| exp_atom          { $1 }
+| exp_app exp_atom  { make (App($1, $2)) }
+| exp_app DOT IDENT { make (Proj($1, $3)) }
+;
+
+exp :
+| exp_app      { $1 }
+| exp COLON tp { make (Annot($1, $3)) }
+
+;
+
 tp_start :
   tp EOF { $1 }
+;
+
+exp_start :
+  exp EOF { $1 }
 ;
