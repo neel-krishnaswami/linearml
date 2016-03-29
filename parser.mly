@@ -152,7 +152,25 @@ exp_app :
 exp :
 | exp_app      { $1 }
 | exp COLON tp { make (Annot($1, $3)) }
+| MATCH exp WITH branches END { make (Case($2, $4)) }
+;
 
+branch :
+| pat TO exp { let (p, xs) = $1 in (p, abs xs $3) }
+;
+
+branches :
+| { [] }
+| branch { [$1] }
+| branch BAR branches { $1 :: $3 }
+;
+
+pat_atom :
+  IDENT              { (PVar, [$1]) }
+;
+
+pat :
+  pat_atom  { $1 }
 ;
 
 tp_start :
