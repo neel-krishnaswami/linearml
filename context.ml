@@ -8,16 +8,15 @@ type sort = Univ | Exist
 
 type tp = Ast.t
 
-
+type hide = Linear | Transient
             
 (* TODO: add markers to model !A *)    
 type hyp = 
   | Tm of tp * usage
   | Tp of sort * tp option 
   | Mark 
-  | HideLinear
-  | HideTransient
-  | Def of int * tp (* Arity plus definition (with arity binders) *)
+  | Hide of hide
+(*  | Def of int * tp (* Arity plus definition (with arity binders) *) *)
 
 type ctx = (var * hyp * loc) list 
 
@@ -25,48 +24,75 @@ type error =
   | Unbound of var 
   | Reuse of var
   | Usage of var
+  | Hidden of hide * var
   | Unused of var * loc 
   
-type ('a, 'b) result = Error of 'b | Result of 'a
 
 type state = {ctx : ctx; loc: loc; gensym : int}
 
 type 'a t = Cmd of (state -> ('a * state, error * loc) result)
 
-let return x = Cmd(fun s -> Result(x, s))
+let return x = Cmd(fun s -> Ok(x, s))
 let (>>=) (Cmd c) f = 
   Cmd(fun s -> 
         match c s with
 	| Error err -> Error err
-	| Result(v, s) -> let Cmd c = f v in c s)
+	| Ok(v, s) -> let Cmd c = f v in c s)
+let map f (Cmd c) = 
+  Cmd(fun s -> 
+      match c s with
+      | Error err -> Error err
+      | Ok(v, s) -> Ok(f v, s))
+
+module M = struct type 'a s =  'a t
+                  type 'a t = 'a s 
+                  let map = map 
+                  let return = return 
+                  let (>>=) = (>>=) 
+           end 
+
+let seq_ast e = 
+  let module S = Ast.Seq(Util.Idiom(M)) in 
+  S.seq e 
 
 let error err = Cmd(fun s -> Error (err, s.loc))
 
-let get_loc = Cmd(fun s -> Result(s.loc, s))
-let set_loc loc = Cmd(fun s -> Result((), {s with loc = loc}))
-let get_ctx = Cmd(fun s -> Result(s.ctx, s))
-let set_ctx ctx = Cmd(fun s -> Result((), {s with ctx = ctx}))
+let get_loc = Cmd(fun s -> Ok(s.loc, s))
+let set_loc loc = Cmd(fun s -> Ok((), {s with loc = loc}))
+let get_ctx = Cmd(fun s -> Ok(s.ctx, s))
+let set_ctx ctx = Cmd(fun s -> Ok((), {s with ctx = ctx}))
 
 
 let gensym name = Cmd(fun state -> 
-                      Result(Printf.sprintf "%s_%d" name state.gensym, 
+                      Ok(Printf.sprintf "%s_%d" name state.gensym, 
                              {state with gensym = state.gensym + 1}))
-  
+
+
+let visibility x usage hide = 
+  match hide, usage with 
+  | Linear, Int               -> Ok Int
+  | Transient, Int            -> Ok Int 
+  | Linear, Lin(_, _)         -> Error (Hidden(Linear, x))
+  | Transient, Lin(_, Later)  -> Error (Hidden(Transient, x))
+  | Transient, Lin(_, Now)    -> Error (Hidden(Transient, x))
+  | Transient, Lin(u, Always) -> Ok (Lin(u, Always))
+
+
 
 let rec lookup x = function
   | [] -> Error (Unbound x)
-  | (y, Tm(tp, Lin(One, t)), loc) :: ctx when y = x  -> Result(Tm(tp, Lin(One, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
-  | (y, Tm(tp, Lin(Aff, t)), loc) :: ctx when y = x  -> Result(Tm(tp, Lin(Aff, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
+  | (y, Tm(tp, Lin(One, t)), loc) :: ctx when y = x  -> Ok(Tm(tp, Lin(One, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
+  | (y, Tm(tp, Lin(Aff, t)), loc) :: ctx when y = x  -> Ok(Tm(tp, Lin(Aff, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
   | (y, Tm(tp, Lin(Zero, t)), loc) :: ctx when y = x -> Error (Reuse x)
-  | (y, h, loc) :: ctx when y = x -> Result(h, (y, h, loc) :: ctx)
+  | (y, h, loc) :: ctx when y = x -> Ok(h, (y, h, loc) :: ctx)
   | (y, h, loc) :: ctx -> (match lookup x ctx with
                            | Error e -> Error e
-		           | Result(r, ctx) -> Result(r, (y, h, loc) :: ctx))
+		           | Ok(r, ctx) -> Ok(r, (y, h, loc) :: ctx))
 
 let lookup x = get_ctx >>= fun ctx ->
                match lookup x ctx with
 	       | Error e -> error e
-	       | Result (v, ctx) -> set_ctx ctx >>= fun () ->
+	       | Ok (v, ctx) -> set_ctx ctx >>= fun () ->
 		                    return v
 
 let with_hyp (x, h, loc) cmd = 
@@ -90,17 +116,34 @@ let with_hyp (x, h, loc) cmd =
   else
     error (Unused(y, loc))
 
-let fresh x = 
+let rec split_context x = function
+  | [] -> assert false
+  | (y, h, loc) :: ctx when x = y -> ([y, h, loc], ctx)
+  | (y, h, loc) :: ctx -> let (front, back) = split_context x ctx in 
+                          ((y, h, loc) :: front, back)  
+          
+let before x cmd = 
   get_ctx >>= fun ctx -> 
-  let vars = V.of_list (List.map fst3 ctx) in
-  return (Ast.freshen x vars)
-  
-let unabs t = 
-  match out t with 
-  | Abs(x, t) -> fresh x >>= fun y -> 
-                 return (y, rename x y t)
-  | _ -> assert false
+  let (front, back) = split_context x ctx in
+  set_ctx back >>= fun () ->
+  cmd >>= fun v -> 
+  get_ctx >>= fun back' -> 
+  set_ctx (front @ back') >>= fun () -> 
+  return v 
 
+let out e = 
+  match Ast.out e with 
+  | Abs(x, e) -> gensym x >>= fun y -> 
+                 return (Abs(y, Ast.rename x y e))
+  | e'        -> return e'
+
+let rec subst e x ebody = 
+  out ebody >>= function 
+  | Var z when x = z -> return e
+  | t -> seq_ast (Ast.map (subst e x) t) >>= fun t' -> 
+         return (into (loc ebody) t')
+
+         
 let rec seq = function
   | [] -> return []
   | c :: cs -> c >>= fun v -> 
@@ -140,7 +183,6 @@ let join_usage u u' =
   | _                      -> None
 
   
-  
 let rec compatible ctx1 ctx2 = 
   match ctx1, ctx2 with
   | ([],[]) -> return ()
@@ -174,3 +216,4 @@ let rec par = function
   | [c] -> c >>= fun v -> return [v]
   | c :: cs -> parallel c (par cs) >>= fun (v, vs) ->
                return (v :: vs)
+

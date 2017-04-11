@@ -6,11 +6,6 @@ type field = string
 
 module V = Set.Make(struct type t = var let compare = compare end)
 let var = {unit = V.empty ; join = V.union}
-let rec freshen x vs = 
-  if V.mem x vs then 
-    freshen (x ^ "'") vs 
-  else
-    x
 
 type pat = PVar | PTuple of pat list | PCon of conid * pat | PF of pat | PAlways of pat | PEvent of pat 
 
@@ -69,34 +64,62 @@ let map f (e : 'a exp) =
   | Always e     -> Always (f e)
   | Event e      -> Event (f e)
 
-let join (m : 'a monoid) (e : 'a exp) = 
-  let (zero, (+)) = m.unit, m.join in 
-  let reduce es = List.fold_right (+) es zero in 
-  match e with
-  | Var x -> zero 
-  | Abs (x, e) -> e
-  | Lam (p,e) -> e
-  | App (e,e') -> e + e'
-  | Record nes -> reduce (List.map snd nes)
-  | Proj (e,n) -> e
-  | Tuple es -> reduce es
-  | Con c -> zero 
-  | Case (e,pes) -> e + reduce (List.map snd pes)
-  | Annot (e,e') -> e + e'
-  | Num n        -> zero
-  | Select ets -> reduce (List.map (fun (e,t) -> e + t) ets)
-  | Yield e -> e 
-  | Forall e -> e
-  | Exists e -> e
-  | Lolli (e,e') -> e + e'
-  | Tensor es -> reduce es
-  | With nes -> reduce (List.map snd nes)
-  | Sum ces -> reduce (List.map snd ces)
-  | Mu e -> e
-  | F e -> e 
-  | G e -> e 
-  | Always e -> e 
-  | Event e -> e 
+module Seq(M : Util.IDIOM) = struct
+  open M 
+  module L = Util.Seq(M)
+  
+  let seq (e : 'a M.t exp) = 
+    match e with
+    | Var x          -> return (Var x)
+    | Abs (x, c)     -> c |> map (fun v -> Abs(x, v))
+    | Lam (p, c)     -> c |> map (fun v -> Lam(p, v))
+    | App (c1, c2)   -> L.pair (c1, c2)
+                        |> map (fun (v1, v2) -> App(v1, v2))
+    | Record ncs     -> let (ns, cs) = List.split ncs in 
+                        L.list cs
+                        |> map (fun vs -> Record (List.combine ns vs))
+    | Proj (c, n)    -> c |> map (fun v -> Proj(v, n))
+    | Tuple cs       -> L.list cs |> map (fun vs -> Tuple vs)
+    | Con c          -> return (Con c)
+    | Case (e, pcs)  -> let (ps, cs) = List.split pcs in 
+                        e ** L.list cs 
+                        |> map (fun (v, vs) -> Case(v, List.combine ps vs))
+    | Annot (c1, c2) -> c1 ** c2 
+                        |> map (fun (v1, v2) -> Annot(v1, v2))
+    | Num n          -> return (Num n)
+    | Select ets     -> L.list (List.map L.pair ets) 
+                        |> map (fun ets' -> Select ets')
+    | Yield c        -> c |> map (fun v -> Yield v)
+    | Forall c       -> c |> map (fun v -> Forall v)
+    | Exists c       -> c |> map (fun v -> Exists v)
+    | Lolli (c1,c2)  -> L.pair (c1, c2) 
+                        |> map (fun (v1, v2) -> Lolli(v1, v2))
+    | Tensor es      -> L.list es 
+                        |> map (fun vs -> Tensor vs)
+    | With ncs       -> let (ns, cs) = List.split ncs in 
+                        L.list cs 
+                        |> map (fun vs -> With (List.combine ns vs))
+    | Sum ncs        -> let (ns, cs) = List.split ncs in 
+                        L.list cs 
+                        |> map (fun vs -> Sum (List.combine ns vs))
+    | Mu c           -> c |> map (fun v -> Mu v)
+    | F c            -> c |> map (fun v -> F v)
+    | G c            -> c |> map (fun v -> G v)
+    | Always c       -> c |> map (fun v -> Always v)
+    | Event c        -> c |> map (fun v -> Event v)
+end
+
+let join (type a) (m : a monoid) (e : a exp) = 
+  let module S = Seq(struct 
+      type 'a t = a
+      let return x = m.unit
+      let map f x = x 
+      let ( ** ) x y = m.join x y 
+      let app f x = m.join f x
+    end)
+  in
+  S.seq e 
+                        
 
 type t = In of loc * V.t * t exp 
 
@@ -120,13 +143,6 @@ let rec rename x y e =
        | Abs(z, e') when x = z -> Abs(z, e')
        | body -> map (rename x y) body)
 
-let rec subst e x ebody = 
-  match out ebody with
-  | Var z when x = z -> e
-  | Abs(z, _) when x = z -> ebody
-  | Abs(z, e') when V.mem z (fvs e) -> let z' = freshen z (fvs e) in
-				       into (loc ebody) (Abs(z', subst e x (rename z z' e')))
-  | _ -> into (loc ebody) (map (subst e x) (out ebody))
 
 module type CONSTR = sig 
   type con
