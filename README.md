@@ -12,6 +12,9 @@ interpretation for a reactive, event-based programming style, and so
 the language should be compilable into Javascript in a way that
 integrates cleanly with the event loop and DOM.
 
-
+The language is intended to support polymorphism using an algorithm
+extending the one in my 2013 paper with Joshua
+Dunfield,
+[*Complete and Easy Bidirectional Typechecking for Higher-Rank Polymorphism*](http://www.cs.cmu.edu/%7Ejoshuad/papers/bidir/)
 
 
