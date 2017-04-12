@@ -15,6 +15,6 @@ integrates cleanly with the event loop and DOM.
 The language is intended to support polymorphism using an algorithm
 extending the one in my 2013 paper with Joshua
 Dunfield,
-[*Complete and Easy Bidirectional Typechecking for Higher-Rank Polymorphism*](http://www.cs.cmu.edu/%7Ejoshuad/papers/bidir/)
+[*Complete and Easy Bidirectional Typechecking for Higher-Rank Polymorphism*](http://www.cs.cmu.edu/%7Ejoshuad/papers/bidir/).
 
 
