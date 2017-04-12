@@ -18,7 +18,7 @@ type hyp =
   | Hide of hide
 (*  | Def of int * tp (* Arity plus definition (with arity binders) *) *)
 
-type ctx = (var * hyp * loc) list 
+type ctx = (var * (hyp * loc)) list 
 
 type error = 
   | Unbound of var 
@@ -81,13 +81,13 @@ let visibility x usage hide =
 
 let rec lookup x = function
   | [] -> Error (Unbound x)
-  | (y, Tm(tp, Lin(One, t)), loc) :: ctx when y = x  -> Ok(Tm(tp, Lin(One, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
-  | (y, Tm(tp, Lin(Aff, t)), loc) :: ctx when y = x  -> Ok(Tm(tp, Lin(Aff, t)), (y, Tm(tp, Lin(Zero, t)), loc) :: ctx)
-  | (y, Tm(tp, Lin(Zero, t)), loc) :: ctx when y = x -> Error (Reuse x)
-  | (y, h, loc) :: ctx when y = x -> Ok(h, (y, h, loc) :: ctx)
-  | (y, h, loc) :: ctx -> (match lookup x ctx with
+  | (y, (Tm(tp, Lin(One, t)), loc)) :: ctx when y = x  -> Ok(Tm(tp, Lin(One, t)), (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx)
+  | (y, (Tm(tp, Lin(Aff, t)), loc)) :: ctx when y = x  -> Ok(Tm(tp, Lin(Aff, t)), (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx)
+  | (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx when y = x -> Error (Reuse x)
+  | (y, (h, loc)) :: ctx when y = x -> Ok(h, (y, (h, loc)) :: ctx)
+  | (y, h) :: ctx -> (match lookup x ctx with
                            | Error e -> Error e
-		           | Ok(r, ctx) -> Ok(r, (y, h, loc) :: ctx))
+		           | Ok(r, ctx) -> Ok(r, (y, h) :: ctx))
 
 let lookup x = get_ctx >>= fun ctx ->
                match lookup x ctx with
@@ -98,15 +98,15 @@ let lookup x = get_ctx >>= fun ctx ->
 let with_hyp (x, h, loc) cmd = 
   let rec pop = function
     | [] -> assert false 
-    | (y, h, loc) :: ctx when x = y -> ((y, h, loc), ctx)
-    | (y, h, loc) :: ctx -> pop ctx 
+    | (y, (h, loc)) :: ctx when x = y -> ((y, h, loc), ctx)
+    | (y, (h, loc)) :: ctx -> pop ctx 
   in 
   let check = function
     | Tm(_, Lin(One, _)) -> false 
-    | _                   -> true 
+    | _                  -> true 
   in 
   get_ctx >>= fun ctx -> 
-  set_ctx ((x, h, loc) :: ctx) >>= fun () ->
+  set_ctx ((x, (h, loc)) :: ctx) >>= fun () ->
   cmd >>= fun v -> 
   get_ctx >>= fun ctx -> 
   let ((y, h, loc), ctx) = pop ctx in 
@@ -118,9 +118,9 @@ let with_hyp (x, h, loc) cmd =
 
 let rec split_context x = function
   | [] -> assert false
-  | (y, h, loc) :: ctx when x = y -> ([y, h, loc], ctx)
-  | (y, h, loc) :: ctx -> let (front, back) = split_context x ctx in 
-                          ((y, h, loc) :: front, back)  
+  | (y, h) :: ctx when x = y -> ([y, h], ctx)
+  | (y, h) :: ctx -> let (front, back) = split_context x ctx in 
+                         ((y, h) :: front, back)  
           
 let before x cmd = 
   get_ctx >>= fun ctx -> 
@@ -150,20 +150,18 @@ let rec seq = function
                seq cs >>= fun vs -> 
                return (v :: vs)
 
-let rec reset_usage (newctx :ctx) (oldctx :ctx)= 
-  match (newctx, oldctx) with
-  | ([],[]) -> []
-  | (x1, Tm(tp1, u1), l1) :: ctx1, (x2, Tm(tp2, u2), l2) :: ctx2 -> 
-    if x1 = x2 then 
-      (x1, Tm(tp1, u2), l1) :: reset_usage ctx1 ctx2 
-    else
-      assert false 
-  | (x1, h, l1) :: ctx1,             (((_, Tm(_, _), _) :: _) as ctx2) -> (x1, h, l1) :: reset_usage ctx1 ctx2 
-  | ((_, Tm(_, _), _) :: _) as ctx1, (_, _, _) :: ctx2                 -> reset_usage ctx1 ctx2
-  | ((_, Tm(_, _), _) :: _),         []                                -> assert false 
-  | [],                              ((_, Tm(_, _), _) :: _)           -> assert false 
-  | ((x1, h, l) :: ctx1),            ctx2                              -> (x1, h, l) :: reset_usage ctx1 ctx2
-  | ctx1,                            (_, _, _) :: ctx2                 -> reset_usage ctx1 ctx2
+
+let rec reset_usage (oldctx : ctx) (newctx : ctx) = 
+  let reset (oldh : hyp) (newh : hyp) : hyp = 
+    match oldh, newh with
+    | Tm(_, u), Tm(tp, _) -> Tm(tp, u)
+    | _, _                -> newh 
+  in 
+  match oldctx, newctx with 
+  | [], newctx                                                      -> newctx
+  | (x1, (h1, l1)) :: oldctx, (x2, (h2, l2)) :: newctx when x1 = x2 -> (x1, (reset h1 h2, l2)) :: reset_usage oldctx newctx
+  | oldctx, (x, h) :: newctx when not (List.mem_assoc x oldctx)     -> (x, h) :: reset_usage oldctx newctx
+  | _, _ -> assert false 
 
 
 let join_usage_lin u u' = 
@@ -175,40 +173,41 @@ let join_usage_lin u u' =
   | _          -> if u = u' then Some u else None
 
 let join_usage u u' = 
+  let open Util.Option in 
   match u, u' with
-  | Int, Int               -> Some Int
-  | Lin(u, t), Lin(u', t') -> (match join_usage_lin u u' with
-                               | Some u'' -> if t = t' then Some(Lin(u'', t)) else assert false
-                               | None -> None)
-  | _                      -> None
+  | Int, Int               -> return Int
+  | Lin(u, t), Lin(u', t') -> join_usage_lin u u' >>= fun u'' -> 
+                              if t = t' then return (Lin(u'', t)) else assert false
+  | _                      -> none
 
-  
-let rec compatible ctx1 ctx2 = 
-  match ctx1, ctx2 with
-  | ([],[]) -> return ()
-  | (x1, Tm(tp1, u1)) :: ctx1,    (x2, Tm(tp2, u2)) :: ctx2 -> 
-    if x1 = x2 then 
-      if usage_ok u1 u2 then 
-	compatible ctx1 ctx2 
-      else
-	error (Usage x1)
-    else
-      assert false 
-  | (_, _) :: ctx1,               (((_, Tm(_, _)) :: _) as ctx2) -> compatible ctx1 ctx2 
-  | ((_, Tm(_, _)) :: _) as ctx1, (_, _) :: ctx2                 -> compatible ctx1 ctx2
-  | ((_, Tm(_, _)) :: _),         []                             -> assert false
-  | [],                           ((_, Tm(_, _)) :: _)           -> assert false 
-  | ((_, _) :: _),                ctx2                           -> compatible ctx1 ctx2
-  | ctx1,                         (_, _) :: ctx2                 -> compatible ctx1 ctx2
+let join_hyp oldh newh = 
+  let open Util.Option in 
+  match oldh, newh with 
+  | Tm(_, u), Tm(tp, u') -> join_usage u u' |> map (fun u'' -> Tm(tp, u''))
+  | _                    -> return newh
+
+let rec compatible oldctx newctx = 
+  match oldctx, newctx with 
+  | [], newctx                                                      -> return newctx
+  | (x1, (h1, l1)) :: oldctx, (x2, (h2, l2)) :: newctx when x1 = x2 -> 
+     (match join_hyp h1 h2 with 
+      | Some h -> compatible oldctx newctx >>= fun ctx -> 
+                  return ((x2, (h, l2)) :: ctx)
+      | None   -> error (Usage x1))
+  | oldctx, (x, h) :: newctx when not (List.mem_assoc x oldctx)     -> 
+     compatible oldctx newctx >>= fun ctx -> 
+     return ((x, h) :: ctx)
+  | _, _ -> assert false 
 
 let parallel c1 c2 = 
   get_ctx >>= fun old -> 
   c1 >>= fun v1 -> 
   get_ctx >>= fun ctx1 -> 
-  set_ctx (reset_usage ctx1 old) >>= fun () -> 
+  set_ctx (reset_usage old ctx1) >>= fun () -> 
   c2 >>= fun v2 -> 
   get_ctx >>= fun ctx2 -> 
-  compatible ctx1 ctx2 >>= fun () -> 
+  compatible ctx1 ctx2 >>= fun ctx -> 
+  set_ctx ctx >>= fun () -> 
   return (v1, v2)
 
 let rec par = function
@@ -216,4 +215,3 @@ let rec par = function
   | [c] -> c >>= fun v -> return [v]
   | c :: cs -> parallel c (par cs) >>= fun (v, vs) ->
                return (v :: vs)
-

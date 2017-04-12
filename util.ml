@@ -1,7 +1,3 @@
-let fst3 (a, b, c) = a
-let snd3 (a, b, c) = b 
-let thd3 (a, b, c) = c 
-
 module type MONAD = sig
   type 'a t 
   val map : ('a -> 'b) -> 'a t -> 'b t 
@@ -66,3 +62,40 @@ module Seq(A : IDIOM) : SEQ with type 'a t = 'a A.t = struct
     | [] -> return []
     | m :: ms -> map cons (m ** (list ms))
 end
+
+module Result = struct
+  type ('a, 'b) t = ('a, 'b) result
+  let ok v = Ok v 
+  let error v = Error v 
+  let map f = function
+    | Ok v -> Ok (f v)
+    | Error e -> Error e 
+  let map_error f = function
+    | Ok v -> Ok v
+    | Error e -> Error (f e)
+  let return = ok 
+  let (>>=) m f = 
+    match m with
+    | Ok v -> f v 
+    | Error e -> Error e 
+end
+
+module Option = struct
+  module Monad = struct
+    type 'a t = 'a option 
+    let return v = Some v 
+    let none = None
+    let map f = function
+      | Some v -> Some (f v)
+      | None -> None
+    let (>>=) m f = 
+      match m with
+      | Some v -> f v 
+      | None -> None
+  end
+  include Monad
+  include  (Idiom(Monad) : IDIOM with type 'a t := 'a option)
+
+
+end
+                  
