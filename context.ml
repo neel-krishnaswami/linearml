@@ -26,6 +26,7 @@ type error =
   | Usage of var
   | Hidden of hide * var
   | Unused of var * loc 
+  | NotEvar of var
   
 
 type state = {ctx : ctx; loc: loc; gensym : int}
@@ -52,7 +53,7 @@ module M = struct type 'a s =  'a t
            end 
 
 let seq_ast e = 
-  let module S = Ast.Seq(Util.Idiom(M)) in 
+  let module S = Ast.Seq(Util.Monoidal(M)) in 
   S.seq e 
 
 let error err = Cmd(fun s -> Error (err, s.loc))
@@ -150,18 +151,28 @@ let rec seq = function
                seq cs >>= fun vs -> 
                return (v :: vs)
 
-
-let rec reset_usage (oldctx : ctx) (newctx : ctx) = 
-  let reset (oldh : hyp) (newh : hyp) : hyp = 
-    match oldh, newh with
-    | Tm(_, u), Tm(tp, _) -> Tm(tp, u)
-    | _, _                -> newh 
-  in 
+let rec merge f err (oldctx : ctx) (newctx : ctx) = 
   match oldctx, newctx with 
-  | [], newctx                                                      -> newctx
-  | (x1, (h1, l1)) :: oldctx, (x2, (h2, l2)) :: newctx when x1 = x2 -> (x1, (reset h1 h2, l2)) :: reset_usage oldctx newctx
-  | oldctx, (x, h) :: newctx when not (List.mem_assoc x oldctx)     -> (x, h) :: reset_usage oldctx newctx
+  | [], newctx                                                      -> 
+     return newctx
+  | (x1, (h1, l1)) :: oldctx, (x2, (h2, l2)) :: newctx when x1 = x2 -> 
+     (match f h1 h2 with 
+      | Some h -> merge f err oldctx newctx >>= fun ctx -> 
+                  return ((x2, (h, l2)) :: ctx)
+      | None   -> error (err x1))
+  | oldctx, (x, h) :: newctx when not (List.mem_assoc x oldctx)     -> 
+     merge f err oldctx newctx >>= fun ctx -> 
+     return ((x, h) :: ctx)
   | _, _ -> assert false 
+
+
+let reset_usage (oldctx : ctx) (newctx : ctx) = 
+  let reset (oldh : hyp) (newh : hyp) = 
+    match oldh, newh with
+    | Tm(_, u), Tm(tp, _) -> Some (Tm(tp, u))
+    | _, _                -> Some newh 
+  in 
+  merge reset (fun x -> Usage x) oldctx newctx
 
 
 let join_usage_lin u u' = 
@@ -187,23 +198,14 @@ let join_hyp oldh newh =
   | _                    -> return newh
 
 let rec compatible oldctx newctx = 
-  match oldctx, newctx with 
-  | [], newctx                                                      -> return newctx
-  | (x1, (h1, l1)) :: oldctx, (x2, (h2, l2)) :: newctx when x1 = x2 -> 
-     (match join_hyp h1 h2 with 
-      | Some h -> compatible oldctx newctx >>= fun ctx -> 
-                  return ((x2, (h, l2)) :: ctx)
-      | None   -> error (Usage x1))
-  | oldctx, (x, h) :: newctx when not (List.mem_assoc x oldctx)     -> 
-     compatible oldctx newctx >>= fun ctx -> 
-     return ((x, h) :: ctx)
-  | _, _ -> assert false 
+  merge join_hyp (fun x -> Usage x) oldctx newctx
 
 let parallel c1 c2 = 
   get_ctx >>= fun old -> 
   c1 >>= fun v1 -> 
   get_ctx >>= fun ctx1 -> 
-  set_ctx (reset_usage old ctx1) >>= fun () -> 
+  reset_usage old ctx1 >>= fun old' -> 
+  set_ctx old' >>= fun () -> 
   c2 >>= fun v2 -> 
   get_ctx >>= fun ctx2 -> 
   compatible ctx1 ctx2 >>= fun ctx -> 
@@ -215,3 +217,23 @@ let rec par = function
   | [c] -> c >>= fun v -> return [v]
   | c :: cs -> parallel c (par cs) >>= fun (v, vs) ->
                return (v :: vs)
+
+
+let inst x tm = 
+  let rec loop = function
+    | [] -> error (Unbound x)
+    | (y, (Tp(Exist, None), loc)) :: ctx when x = y -> return ((x, (Tp(Exist, Some tm), loc)) :: ctx)
+    | (y, h) :: ctx when x = y -> error (NotEvar x)
+    | (y, h) :: ctx -> loop ctx >>= fun ctx -> 
+                       return ((y, h) :: ctx)
+  in 
+  get_ctx >>= fun ctx -> 
+  loop ctx >>= fun ctx -> 
+  set_ctx ctx
+
+let instantiate ctx x tm = 
+  before x (get_ctx >>= fun pre -> 
+            set_ctx (pre @ (List.rev ctx))) >>= fun () -> 
+  inst x tm
+
+

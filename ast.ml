@@ -36,6 +36,8 @@ type 'a exp =
   | G of 'a 
   | Always of 'a 
   | Event of 'a
+  | Type
+  | Linear 
 
 let map f (e : 'a exp) = 
   match e with
@@ -63,6 +65,8 @@ let map f (e : 'a exp) =
   | G e          -> G (f e)
   | Always e     -> Always (f e)
   | Event e      -> Event (f e)
+  | Type         -> Type
+  | Linear       -> Linear 
 
 module Seq(M : Util.IDIOM) = struct
   open M 
@@ -107,19 +111,19 @@ module Seq(M : Util.IDIOM) = struct
     | G c            -> c |> map (fun v -> G v)
     | Always c       -> c |> map (fun v -> Always v)
     | Event c        -> c |> map (fun v -> Event v)
+    | Type           -> return Type
+    | Linear         -> return Linear 
 end
 
 let join (type a) (m : a monoid) (e : a exp) = 
-  let module S = Seq(struct 
+  let module S = Seq(Util.MkIdiom(struct 
       type 'a t = a
-      let return x = m.unit
       let map f x = x 
+      let unit () = m.unit 
       let ( ** ) x y = m.join x y 
-      let app f x = m.join f x
-    end)
+    end))
   in
   S.seq e 
-                        
 
 type t = In of loc * V.t * t exp 
 
@@ -171,6 +175,8 @@ module type CONSTR = sig
   val g : con  -> con
   val always : con  -> con
   val event : con  -> con
+  val type' : con
+  val linear : con 
                      
   val (@) : con -> loc -> con
 
@@ -182,6 +188,8 @@ module Constr : CONSTR = struct
 
   let var : var -> con = 
     fun x loc -> into loc (Var x)                    
+
+
 
   let abs : var * con  -> con =
     fun (x, c) loc -> 
@@ -259,6 +267,10 @@ module Constr : CONSTR = struct
 
   let event : con  -> con =
     fun e loc -> into loc (Event(e loc))
+
+  let type' = fun loc -> into loc Type 
+
+  let linear = fun loc -> into loc Linear 
 
                       
   let (@) : con -> loc -> con =
