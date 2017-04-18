@@ -7,13 +7,14 @@ type usage = Int | Lin of count * time
 type sort = Univ | Exist  
 
 type tp = Ast.t
+type kind = Ast.t 
 
 type hide = Linear | Transient
             
 (* TODO: add markers to model !A *)    
 type hyp = 
   | Tm of tp * usage
-  | Tp of sort * tp option 
+  | Tp of sort * kind * tp option 
   | Mark 
   | Hide of hide
 (*  | Def of int * tp (* Arity plus definition (with arity binders) *) *)
@@ -69,34 +70,39 @@ let gensym name = Cmd(fun state ->
                              {state with gensym = state.gensym + 1}))
 
 
-let visibility x usage hide = 
-  match hide, usage with 
-  | Linear, Int               -> Ok Int
-  | Transient, Int            -> Ok Int 
-  | Linear, Lin(_, _)         -> Error (Hidden(Linear, x))
-  | Transient, Lin(_, Later)  -> Error (Hidden(Transient, x))
-  | Transient, Lin(_, Now)    -> Error (Hidden(Transient, x))
-  | Transient, Lin(u, Always) -> Ok (Lin(u, Always))
 
+let acquire usage hidden = 
+  let open Result in 
+  match usage with 
+  | Int -> return(Int, Int)
+  | Lin(Zero, _) -> Error (fun x -> Reuse x)
+  | Lin(u, t) when List.mem Linear hidden -> Error(fun x -> Hidden(Linear, x))
+  | Lin(u, Later) when List.mem Transient hidden -> Error(fun x -> Hidden(Transient, x))
+  | Lin(u, Now)   when List.mem Transient hidden -> Error(fun x -> Hidden(Transient, x))
+  | Lin(u, t) -> return (Lin(u, t), Lin(Zero, t))
 
+let rec lookup hidden x ctx = 
+  let open Result in 
+  match ctx with 
+  | []                                      -> Error (fun x -> Unbound x)
+  | (y, (Tm(tp, u), loc)) :: ctx when y = x -> acquire u hidden >>= fun (u, u') -> 
+                                               return (Tm(tp, u), (y, (Tm(tp, u'), loc)) :: ctx)
+  | (y, (h, loc)) :: ctx when y = x         -> return (h, (y, (h, loc)) :: ctx)
+  | (y, (Hide h, loc)) :: ctx               -> lookup (h :: hidden) x ctx >>= fun (r, ctx) -> 
+		                               return (r, (y, (Hide h, loc)) :: ctx)
+  | (y, h) :: ctx                           -> lookup hidden x ctx >>= fun (v, ctx) -> 
+                                               return (v, (y, h) :: ctx)
+                     
+                                   
 
-let rec lookup x = function
-  | [] -> Error (Unbound x)
-  | (y, (Tm(tp, Lin(One, t)), loc)) :: ctx when y = x  -> Ok(Tm(tp, Lin(One, t)), (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx)
-  | (y, (Tm(tp, Lin(Aff, t)), loc)) :: ctx when y = x  -> Ok(Tm(tp, Lin(Aff, t)), (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx)
-  | (y, (Tm(tp, Lin(Zero, t)), loc)) :: ctx when y = x -> Error (Reuse x)
-  | (y, (h, loc)) :: ctx when y = x -> Ok(h, (y, (h, loc)) :: ctx)
-  | (y, h) :: ctx -> (match lookup x ctx with
-                           | Error e -> Error e
-		           | Ok(r, ctx) -> Ok(r, (y, h) :: ctx))
 
 let lookup x = get_ctx >>= fun ctx ->
-               match lookup x ctx with
-	       | Error e -> error e
+               match lookup [] x ctx with
+	       | Error e -> error (e x)
 	       | Ok (v, ctx) -> set_ctx ctx >>= fun () ->
-		                    return v
-
-let with_hyp (x, h, loc) cmd = 
+		                return v
+                                           
+let with_hyp (x, h) cmd = 
   let rec pop = function
     | [] -> assert false 
     | (y, (h, loc)) :: ctx when x = y -> ((y, h, loc), ctx)
@@ -106,6 +112,7 @@ let with_hyp (x, h, loc) cmd =
     | Tm(_, Lin(One, _)) -> false 
     | _                  -> true 
   in 
+  get_loc >>= fun loc -> 
   get_ctx >>= fun ctx -> 
   set_ctx ((x, (h, loc)) :: ctx) >>= fun () ->
   cmd >>= fun v -> 
@@ -132,6 +139,10 @@ let before x cmd =
   set_ctx (front @ back') >>= fun () -> 
   return v 
 
+let into e = 
+  get_loc >>= fun loc -> 
+  return (Ast.into loc e)
+
 let out e = 
   match Ast.out e with 
   | Abs(x, e) -> gensym x >>= fun y -> 
@@ -142,14 +153,7 @@ let rec subst e x ebody =
   out ebody >>= function 
   | Var z when x = z -> return e
   | t -> seq_ast (Ast.map (subst e x) t) >>= fun t' -> 
-         return (into (loc ebody) t')
-
-         
-let rec seq = function
-  | [] -> return []
-  | c :: cs -> c >>= fun v -> 
-               seq cs >>= fun vs -> 
-               return (v :: vs)
+         return (Ast.into (loc ebody) t')
 
 let rec merge f err (oldctx : ctx) (newctx : ctx) = 
   match oldctx, newctx with 
@@ -212,17 +216,30 @@ let parallel c1 c2 =
   set_ctx ctx >>= fun () -> 
   return (v1, v2)
 
-let rec par = function
-  | [] -> return []
-  | [c] -> c >>= fun v -> return [v]
-  | c :: cs -> parallel c (par cs) >>= fun (v, vs) ->
-               return (v :: vs)
+module Par = Util.Seq(Util.MkIdiom(struct
+                                    type 'a s = 'a t 
+                                    type 'a t = 'a s
+                                    let map = map 
+                                    let unit () = return () 
+                                    let ( ** ) = parallel 
+                                  end))
 
+module Seq = Util.Seq(Util.Monoidal(M))
+         
+
+
+
+let evar kind = 
+  gensym "?a" >>= fun a -> 
+  get_loc >>= fun loc -> 
+  get_ctx >>= fun ctx -> 
+  set_ctx ((a, (Tp(Exist, kind, None), loc)) :: ctx) >>= fun () -> 
+  return a 
 
 let inst x tm = 
   let rec loop = function
     | [] -> error (Unbound x)
-    | (y, (Tp(Exist, None), loc)) :: ctx when x = y -> return ((x, (Tp(Exist, Some tm), loc)) :: ctx)
+    | (y, (Tp(Exist, k, None), loc)) :: ctx when x = y -> return ((x, (Tp(Exist, k, Some tm), loc)) :: ctx)
     | (y, h) :: ctx when x = y -> error (NotEvar x)
     | (y, h) :: ctx -> loop ctx >>= fun ctx -> 
                        return ((y, h) :: ctx)
@@ -231,9 +248,6 @@ let inst x tm =
   loop ctx >>= fun ctx -> 
   set_ctx ctx
 
-let instantiate ctx x tm = 
-  before x (get_ctx >>= fun pre -> 
-            set_ctx (pre @ (List.rev ctx))) >>= fun () -> 
-  inst x tm
-
-
+let run ctx loc (Cmd cmd) = 
+  let state = { ctx = ctx; loc = loc; gensym = 0 } in 
+  Result.map fst Fn.id (cmd state)

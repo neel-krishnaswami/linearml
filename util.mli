@@ -41,14 +41,7 @@ module Monoidal :
   functor (M : MONAD) -> (IDIOM with type 'a t = 'a M.t)
 
 module Seq :
-  functor (A : IDIOM) ->
-    sig
-      type 'a t = 'a A.t
-      val pair : 'a t * 'b t -> ('a * 'b) t
-      val option : 'a t option -> 'a option t
-      val result : ('a t, 'b) result -> ('a, 'b) result t
-      val list : 'a t list -> 'a list t
-    end
+  functor (A : IDIOM) -> (SEQ with type 'a t = 'a A.t)
 
 module Pair :
   sig
