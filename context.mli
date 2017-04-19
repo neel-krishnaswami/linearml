@@ -18,7 +18,12 @@ type error =
   | Hidden of hide * Ast.var
   | Unused of Ast.var * Ast.loc
   | NotEvar of Ast.var
+  | IllSorted of Ast.var * string
+  | NotEqual of tp * tp * string
+  | Synth_mismatch of tp * string
+  | Check_mismatch of tp * string
 
+                         
 type 'a t
 
 val return : 'a -> 'a t

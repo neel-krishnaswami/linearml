@@ -27,13 +27,14 @@ type 'a exp =
   | Num of int
   | Select of ('a * 'a) list
   | Yield of 'a
-  | Forall of 'a
-  | Exists of 'a
+  | Forall of 'a * 'a 
+  | Exists of 'a * 'a
   | Lolli of 'a * 'a
+  | Arrow of 'a * 'a
   | Tensor of 'a list
   | With of (field * 'a) list
   | Sum of (conid * 'a) list
-  | Mu of 'a
+  | Mu of 'a * 'a 
   | F of 'a
   | G of 'a
   | Always of 'a
@@ -79,7 +80,7 @@ module Constr : sig
     val tensor : con list -> con
     val witht : (field * con) list -> con
     val sum : (conid * con) list -> con
-    val mu : con -> con
+    val mu : con * con -> con
     val f : con -> con
     val g : con -> con
     val always : con -> con

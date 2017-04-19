@@ -28,7 +28,10 @@ type error =
   | Hidden of hide * var
   | Unused of var * loc 
   | NotEvar of var
-  
+  | IllSorted of var * string 
+  | NotEqual of tp * tp * string
+  | Synth_mismatch of tp * string
+  | Check_mismatch of tp * string
 
 type state = {ctx : ctx; loc: loc; gensym : int}
 

@@ -25,13 +25,14 @@ type 'a exp =
   | Num of int 
   | Select of ('a * 'a) list 
   | Yield of 'a 
-  | Forall of 'a 
-  | Exists of 'a 
+  | Forall of 'a * 'a 
+  | Exists of 'a * 'a 
   | Lolli of 'a * 'a 
+  | Arrow of 'a * 'a 
   | Tensor of 'a list 
   | With of (field * 'a) list 
   | Sum of (conid * 'a) list
-  | Mu of 'a 
+  | Mu of 'a * 'a 
   | F of 'a 
   | G of 'a 
   | Always of 'a 
@@ -54,13 +55,14 @@ let map f (e : 'a exp) =
   | Num n        -> Num n 
   | Select ets   -> Select (List.map (fun (e, t) -> (f e, f t)) ets)
   | Yield e      -> Yield (f e)
-  | Forall e     -> Forall (f e)
-  | Exists e     -> Exists (f e)
+  | Forall(e,e') -> Forall (f e, f e')
+  | Exists(e,e') -> Exists (f e, f e')
   | Lolli (e,e') -> Lolli(f e, f e')
+  | Arrow (e,e') -> Arrow(f e, f e')
   | Tensor es    -> Tensor (List.map f es)
   | With nes     -> With (List.map (fun (n, e) -> (n, f e)) nes)
   | Sum ces      -> With (List.map (fun (c, e) -> (c, f e)) ces)
-  | Mu e         -> Mu (f e)
+  | Mu (e, e')   -> Mu (f e, f e')
   | F e          -> F (f e)
   | G e          -> G (f e)
   | Always e     -> Always (f e)
@@ -94,10 +96,12 @@ module Seq(M : Util.IDIOM) = struct
     | Select ets     -> L.list (List.map L.pair ets) 
                         |> map (fun ets' -> Select ets')
     | Yield c        -> c |> map (fun v -> Yield v)
-    | Forall c       -> c |> map (fun v -> Forall v)
-    | Exists c       -> c |> map (fun v -> Exists v)
+    | Forall(c1,c2)  -> L.pair (c1, c2) |> map (fun (v1, v2) -> Forall(v1, v2))
+    | Exists(c1,c2)  -> L.pair (c1, c2) |> map (fun (v1, v2) -> Exists(v1, v2))
     | Lolli (c1,c2)  -> L.pair (c1, c2) 
                         |> map (fun (v1, v2) -> Lolli(v1, v2))
+    | Arrow (c1,c2)  -> L.pair (c1, c2) 
+                        |> map (fun (v1, v2) -> Arrow(v1, v2))
     | Tensor es      -> L.list es 
                         |> map (fun vs -> Tensor vs)
     | With ncs       -> let (ns, cs) = List.split ncs in 
@@ -106,7 +110,8 @@ module Seq(M : Util.IDIOM) = struct
     | Sum ncs        -> let (ns, cs) = List.split ncs in 
                         L.list cs 
                         |> map (fun vs -> Sum (List.combine ns vs))
-    | Mu c           -> c |> map (fun v -> Mu v)
+    | Mu(c1,c2)      -> L.pair (c1, c2) 
+                        |> map (fun (v1, v2) -> Mu(v1, v2))
     | F c            -> c |> map (fun v -> F v)
     | G c            -> c |> map (fun v -> G v)
     | Always c       -> c |> map (fun v -> Always v)
@@ -164,13 +169,13 @@ module type CONSTR = sig
   val num : int  -> con
   val yield : con -> con
   val select : (con * con) list -> con 
-  val forall : con  -> con
-  val exists : con  -> con
+  val forall : con  -> con -> con
+  val exists : con  -> con -> con 
   val lolli : con * con  -> con
   val tensor : con list  -> con
   val witht : (field * con) list  -> con
   val sum : (conid * con) list -> con
-  val mu : con  -> con
+  val mu : con * con  -> con
   val f : con  -> con
   val g : con  -> con
   val always : con  -> con
@@ -232,11 +237,11 @@ module Constr : CONSTR = struct
   let yield : con  -> con =
     fun e loc -> into loc (Yield (e loc))
                       
-  let forall : con  -> con =
-    fun e loc -> into loc (Forall(e loc))
+  let forall : con  -> con -> con =
+    fun e1 e2 loc -> into loc (Forall(e1 loc, e2 loc))
 
-  let exists : con  -> con =
-    fun e loc -> into loc (Exists(e loc))
+  let exists : con  -> con -> con =
+    fun e1 e2 loc -> into loc (Exists(e1 loc, e2 loc))
                       
   let lolli : con * con  -> con =
     fun (f, e) loc -> into loc (Lolli(f loc, e loc))
@@ -252,8 +257,8 @@ module Constr : CONSTR = struct
     fun ncs loc -> let nts = List.map (fun (n, c) -> (n, c loc)) ncs in 
                    into loc (Sum nts)
 
-  let mu : con  -> con =
-    fun e loc -> into loc (Mu(e loc))
+  let mu : con * con -> con =
+    fun (e, e') loc -> into loc (Mu(e loc, e' loc))
 
  
   let f : con  -> con =
