@@ -4,6 +4,30 @@ open Util
 open Ast
 open Context
 
+
+
+let rec base_kind kind = 
+  (loc kind)
+  @@ (out kind >>= function
+   | Type  -> return ()
+   | Linear  -> return ()
+   | Arrow(k1, k2) -> base_kind k1 >>= fun () -> 
+                      base_kind k2 
+   | Karrow(_, _) -> error IllFormedKind
+   | _ -> assert false)
+
+let rec kind_wf kind = 
+  (loc kind)
+  @@ (out kind >>= function
+   | Type  -> return ()
+   | Linear  -> return ()
+   | Arrow(k1, k2) -> base_kind k1 >>= fun () -> 
+                      base_kind k2 
+   | Karrow(k1, k2) -> kind_wf k1 >>= fun () -> 
+                       kind_wf k2
+   | _ -> assert false)
+    
+       
 let rec kind_eq kind kind' = 
   match (Ast.out kind, Ast.out kind') with
   | Linear, Linear -> return () 
@@ -55,11 +79,12 @@ let rec check_kind tp kind =
   | Event tp', Linear -> check_kind tp' kind
   | Event tp', _      -> error (Check_mismatch(kind, "linear event type constructor occurs here"))
   | Var _, _ 
-  | Annot (_,_), _
+  | Annot (_,_), _  (* Do we want this? *)
   | App (_,_), _ -> synth_kind tp >>= fun kind' -> 
                     kind_eq kind kind'
   | Type, _  
   | Linear, _
+  | Karrow(_, _), _ 
   | Record _, _ 
   | Proj (_,_), _
   | Tuple _, _
@@ -84,6 +109,7 @@ and synth_kind tp =
       | Arrow(k2, kind) -> check_kind tp2 k2 >>= fun () -> 
                            return kind 
       | _ -> error (Synth_mismatch(k1, "function kind")))
+  (* Do we want this? *)
   | Annot(tp, kind) -> check_kind tp kind >>= fun () -> 
                        return kind 
   | _ -> assert false 

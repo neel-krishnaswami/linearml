@@ -32,20 +32,21 @@ type error =
   | NotEqual of tp * tp * string
   | Synth_mismatch of tp * string
   | Check_mismatch of tp * string
+  | IllFormedKind
 
-type state = {ctx : ctx; loc: loc; gensym : int}
+type state = {ctx : ctx; gensym : int}
 
-type 'a t = Cmd of (state -> ('a * state, error * loc) result)
+type 'a t = Cmd of (loc -> state -> ('a * state, error * loc) result)
 
-let return x = Cmd(fun s -> Ok(x, s))
+let return x = Cmd(fun loc s -> Ok(x, s))
 let (>>=) (Cmd c) f = 
-  Cmd(fun s -> 
-        match c s with
+  Cmd(fun loc s -> 
+        match c loc s with
 	| Error err -> Error err
-	| Ok(v, s) -> let Cmd c = f v in c s)
+	| Ok(v, s) -> let Cmd c = f v in c loc s)
 let map f (Cmd c) = 
-  Cmd(fun s -> 
-      match c s with
+  Cmd(fun loc s -> 
+      match c loc s with
       | Error err -> Error err
       | Ok(v, s) -> Ok(f v, s))
 
@@ -60,15 +61,16 @@ let seq_ast e =
   let module S = Ast.Seq(Util.Monoidal(M)) in 
   S.seq e 
 
-let error err = Cmd(fun s -> Error (err, s.loc))
+let error err = Cmd(fun loc s -> Error (err, loc))
 
-let get_loc = Cmd(fun s -> Ok(s.loc, s))
-let set_loc loc = Cmd(fun s -> Ok((), {s with loc = loc}))
-let get_ctx = Cmd(fun s -> Ok(s.ctx, s))
-let set_ctx ctx = Cmd(fun s -> Ok((), {s with ctx = ctx}))
+let ( @@ ) loc (Cmd c) = Cmd(fun _ s -> c loc s)               
+let get_loc = Cmd(fun loc s -> Ok(loc, s))
+
+let get_ctx = Cmd(fun loc s -> Ok(s.ctx, s))
+let set_ctx ctx = Cmd(fun loc s -> Ok((), {s with ctx = ctx}))
 
 
-let gensym name = Cmd(fun state -> 
+let gensym name = Cmd(fun loc state -> 
                       Ok(Printf.sprintf "%s_%d" name state.gensym, 
                              {state with gensym = state.gensym + 1}))
 
@@ -252,5 +254,5 @@ let inst x tm =
   set_ctx ctx
 
 let run ctx loc (Cmd cmd) = 
-  let state = { ctx = ctx; loc = loc; gensym = 0 } in 
-  Result.map fst Fn.id (cmd state)
+  let state = { ctx = ctx; gensym = 0 } in 
+  Result.map fst Fn.id (cmd loc state)

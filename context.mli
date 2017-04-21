@@ -22,6 +22,7 @@ type error =
   | NotEqual of tp * tp * string
   | Synth_mismatch of tp * string
   | Check_mismatch of tp * string
+  | IllFormedKind
 
                          
 type 'a t
@@ -32,8 +33,9 @@ val map : ('a -> 'b) -> 'a t -> 'b t
 
 val seq_ast : 'a t Ast.exp -> 'a Ast.exp t
 val error : error -> 'a t
+
 val get_loc : Ast.loc t
-val set_loc : Ast.loc -> unit t
+val (@@) : Ast.loc -> 'a t -> 'a t 
 
 val gensym : string -> string t
 

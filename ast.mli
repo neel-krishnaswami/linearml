@@ -13,34 +13,35 @@ type pat =
   | PAlways of pat
   | PEvent of pat
 
-type 'a exp =
-    Var of var
-  | Abs of var * 'a
-  | Lam of pat * 'a
-  | App of 'a * 'a
-  | Record of (field * 'a) list
+type 'a exp = 
+  | Var of var
+  | Abs of var * 'a 
+  | Lam of pat * 'a 
+  | App of 'a * 'a 
+  | Record of (field * 'a) list 
   | Proj of 'a * field
-  | Tuple of 'a list
-  | Con of conid
-  | Case of 'a * (pat * 'a) list
+  | Tuple of 'a list 
+  | Con of conid 
+  | Case of 'a * (pat * 'a) list 
   | Annot of 'a * 'a
-  | Num of int
-  | Select of ('a * 'a) list
-  | Yield of 'a
+  | Num of int 
+  | Select of ('a * 'a) list 
+  | Yield of 'a 
   | Forall of 'a * 'a 
-  | Exists of 'a * 'a
-  | Lolli of 'a * 'a
-  | Arrow of 'a * 'a
-  | Tensor of 'a list
-  | With of (field * 'a) list
+  | Exists of 'a * 'a 
+  | Lolli of 'a * 'a 
+  | Arrow of 'a * 'a 
+  | Karrow of 'a * 'a 
+  | Tensor of 'a list 
+  | With of (field * 'a) list 
   | Sum of (conid * 'a) list
   | Mu of 'a * 'a 
-  | F of 'a
-  | G of 'a
-  | Always of 'a
+  | F of 'a 
+  | G of 'a 
+  | Always of 'a 
   | Event of 'a
   | Type
-  | Linear
+  | Linear 
 
 val map : ('a -> 'b) -> 'a exp -> 'b exp
 

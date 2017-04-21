@@ -5,7 +5,7 @@ type conid = string (* Leading uppercase *)
 type field = string
 
 module V = Set.Make(struct type t = var let compare = compare end)
-let var = {unit = V.empty ; join = V.union}
+let variables = {unit = V.empty ; join = V.union}
 
 type pat = PVar | PTuple of pat list | PCon of conid * pat | PF of pat | PAlways of pat | PEvent of pat 
 
@@ -29,6 +29,7 @@ type 'a exp =
   | Exists of 'a * 'a 
   | Lolli of 'a * 'a 
   | Arrow of 'a * 'a 
+  | Karrow of 'a * 'a 
   | Tensor of 'a list 
   | With of (field * 'a) list 
   | Sum of (conid * 'a) list
@@ -39,36 +40,37 @@ type 'a exp =
   | Event of 'a
   | Type
   | Linear 
-
+            
 let map f (e : 'a exp) = 
   match e with
-  | Var x        -> Var x
-  | Abs (x,e)    -> Abs(x, f e)
-  | Lam (p,e)    -> Lam(p, f e)
-  | App (e, e')  -> App(f e, f e')
-  | Record nes   -> Record (List.map (fun (n, e) -> (n, f e)) nes)
-  | Proj (e, n)  -> Proj (f e, n)
-  | Tuple es     -> Tuple (List.map f es)
-  | Con c        -> Con c
-  | Case (e,pes) -> Case(f e, List.map (fun (p, e) -> (p, f e)) pes)
-  | Annot (e,e') -> Annot(f e, f e')
-  | Num n        -> Num n 
-  | Select ets   -> Select (List.map (fun (e, t) -> (f e, f t)) ets)
-  | Yield e      -> Yield (f e)
-  | Forall(e,e') -> Forall (f e, f e')
-  | Exists(e,e') -> Exists (f e, f e')
-  | Lolli (e,e') -> Lolli(f e, f e')
-  | Arrow (e,e') -> Arrow(f e, f e')
-  | Tensor es    -> Tensor (List.map f es)
-  | With nes     -> With (List.map (fun (n, e) -> (n, f e)) nes)
-  | Sum ces      -> With (List.map (fun (c, e) -> (c, f e)) ces)
-  | Mu (e, e')   -> Mu (f e, f e')
-  | F e          -> F (f e)
-  | G e          -> G (f e)
-  | Always e     -> Always (f e)
-  | Event e      -> Event (f e)
-  | Type         -> Type
-  | Linear       -> Linear 
+  | Var x         -> Var x
+  | Abs (x,e)     -> Abs(x, f e)
+  | Lam (p,e)     -> Lam(p, f e)
+  | App (e, e')   -> App(f e, f e')
+  | Record nes    -> Record (List.map (fun (n, e) -> (n, f e)) nes)
+  | Proj (e, n)   -> Proj (f e, n)
+  | Tuple es      -> Tuple (List.map f es)
+  | Con c         -> Con c
+  | Case (e,pes)  -> Case(f e, List.map (fun (p, e) -> (p, f e)) pes)
+  | Annot (e,e')  -> Annot(f e, f e')
+  | Num n         -> Num n 
+  | Select ets    -> Select (List.map (fun (e, t) -> (f e, f t)) ets)
+  | Yield e       -> Yield (f e)
+  | Forall(e,e')  -> Forall (f e, f e')
+  | Exists(e,e')  -> Exists (f e, f e')
+  | Lolli (e,e')  -> Lolli(f e, f e')
+  | Arrow (e,e')  -> Arrow(f e, f e')
+  | Karrow (e,e') -> Karrow(f e, f e')
+  | Tensor es     -> Tensor (List.map f es)
+  | With nes      -> With (List.map (fun (n, e) -> (n, f e)) nes)
+  | Sum ces       -> With (List.map (fun (c, e) -> (c, f e)) ces)
+  | Mu (e, e')    -> Mu (f e, f e')
+  | F e           -> F (f e)
+  | G e           -> G (f e)
+  | Always e      -> Always (f e)
+  | Event e       -> Event (f e)
+  | Type          -> Type
+  | Linear        -> Linear  
 
 module Seq(M : Util.IDIOM) = struct
   open M 
@@ -102,6 +104,8 @@ module Seq(M : Util.IDIOM) = struct
                         |> map (fun (v1, v2) -> Lolli(v1, v2))
     | Arrow (c1,c2)  -> L.pair (c1, c2) 
                         |> map (fun (v1, v2) -> Arrow(v1, v2))
+    | Karrow (c1,c2) -> L.pair (c1, c2) 
+                        |> map (fun (v1, v2) -> Karrow(v1, v2))
     | Tensor es      -> L.list es 
                         |> map (fun vs -> Tensor vs)
     | With ncs       -> let (ns, cs) = List.split ncs in 
@@ -141,7 +145,7 @@ let into loc body =
     match map fvs body with
     | Var x      -> V.singleton x 
     | Abs(x, vs) -> V.remove x vs
-    | evs        -> join var evs
+    | evs        -> join variables evs
   in 
   In(loc, vs, body)
 
